@@ -1,5 +1,5 @@
 syntax = "proto3";  
-option go_package = "ARGAWALA";
+option go_package = "ARGAWALA/grpc";
 
 message Request {
     int64 time = 1;
