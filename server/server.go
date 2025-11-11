@@ -95,14 +95,8 @@ func (s *Server) SendRequest(ctx context.Context, req *proto.Request) (*proto.Em
 func (s *Server) SendReply(ctx context.Context, rep *proto.Reply) (*proto.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if !s.requesting {
-		log.Printf("[%s] received GRANT but not requesting; ignoring", s.id)
-		return &proto.Empty{}, nil
-	}
-
 	s.grants++
-	log.Printf("[%s] received GRANT (%d/%d)", s.id, s.grants, len(s.peers))
+	log.Printf("[%s] received GRANT (%d/%d) message=%q", s.id, s.grants, len(s.peers), rep.Message)
 	return &proto.Empty{}, nil
 }
 
@@ -270,7 +264,11 @@ func main() {
 		case "req":
 			go s.requestCS()
 		case "exit":
-			s.exitCS()
+			if s.inCS {
+				s.exitCS()
+			} else {
+				log.Printf("[%s] not in CS - nothing to exit", s.id)
+			}
 		default:
 			log.Printf("[%s] unknown command: %q (try 'req' or 'exit')", s.id, cmd)
 		}
