@@ -32,7 +32,7 @@ type Server struct {
 	reqTS      int64
 	grants     int
 	deferred   map[string]bool // addr -> deferred?
-	inCS bool
+	inCS       bool
 }
 
 func NewServer(id, addr string, peers []string) *Server {
@@ -95,50 +95,56 @@ func (s *Server) SendRequest(ctx context.Context, req *proto.Request) (*proto.Em
 func (s *Server) SendReply(ctx context.Context, rep *proto.Reply) (*proto.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if !s.requesting {
+		log.Printf("[%s] received GRANT but not requesting; ignoring", s.id)
+		return &proto.Empty{}, nil
+	}
+
 	s.grants++
-	log.Printf("[%s] received GRANT (%d/%d) message=%q", s.id, s.grants, len(s.peers), rep.Message)
+	log.Printf("[%s] received GRANT (%d/%d)", s.id, s.grants, len(s.peers))
 	return &proto.Empty{}, nil
 }
 
 /***************  client helpers  ****************/
 
 func (s *Server) sendGrant(peerAddr string) {
-    var cli proto.ArgaWalaClient
-    var ok bool
-    if cli, ok = s.clis[peerAddr]; !ok {
-        // create on first use
-        conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-        if err == nil {
-            cli = proto.NewArgaWalaClient(conn)
-            s.clis[peerAddr] = cli
-        }
-    }
+	var cli proto.ArgaWalaClient
+	var ok bool
+	if cli, ok = s.clis[peerAddr]; !ok {
+		// create on first use
+		conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err == nil {
+			cli = proto.NewArgaWalaClient(conn)
+			s.clis[peerAddr] = cli
+		}
+	}
 
-    backoff := 150 * time.Millisecond
-    for attempt := 1; attempt <= 5; attempt++ {
-        if cli == nil {
-            // try to (re)dial
-            conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-            if err != nil {
-                log.Printf("[%s] grant: dial %s (attempt %d): %v", s.id, peerAddr, attempt, err)
-                time.Sleep(backoff)
-                backoff *= 2
-                continue
-            }
-            cli = proto.NewArgaWalaClient(conn)
-            s.clis[peerAddr] = cli
-        }
+	backoff := 150 * time.Millisecond
+	for attempt := 1; attempt <= 5; attempt++ {
+		if cli == nil {
+			// try to (re)dial
+			conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				log.Printf("[%s] grant: dial %s (attempt %d): %v", s.id, peerAddr, attempt, err)
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			cli = proto.NewArgaWalaClient(conn)
+			s.clis[peerAddr] = cli
+		}
 
-        ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-        _, err := cli.SendReply(ctx, &proto.Reply{Message: "grant"})
-        cancel()
-        if err == nil {
-            return
-        }
-        log.Printf("[%s] SendReply to %s (attempt %d) failed: %v", s.id, peerAddr, attempt, err)
-        time.Sleep(backoff)
-        backoff *= 2
-    }
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, err := cli.SendReply(ctx, &proto.Reply{Message: "grant"})
+		cancel()
+		if err == nil {
+			return
+		}
+		log.Printf("[%s] SendReply to %s (attempt %d) failed: %v", s.id, peerAddr, attempt, err)
+		time.Sleep(backoff)
+		backoff *= 2
+	}
 }
 
 func (s *Server) broadcastRequest() {
@@ -164,65 +170,59 @@ func (s *Server) broadcastRequest() {
 	}
 }
 
-func (s *Server) release() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.requesting = false
-	for p := range s.deferred {
-		go s.sendGrant(p)
-	}
-	log.Printf("[%s] RELEASE; granted to %d deferred", s.id, len(s.deferred))
-	s.deferred = make(map[string]bool)
-}
-
 /***************  CS driver  ****************/
 
 func (s *Server) requestCS() {
-    s.broadcastRequest()
+	s.broadcastRequest()
 
-    // Wait for all grants
-    for {
-        time.Sleep(50 * time.Millisecond)
-        s.mu.Lock()
-        done := (s.grants == len(s.peers))
-        s.mu.Unlock()
-        if done {
-            break
-        }
-    }
+	// Wait for all grants
+	for {
+		time.Sleep(50 * time.Millisecond)
+		s.mu.Lock()
+		done := (s.grants == len(s.peers))
+		s.mu.Unlock()
+		if done {
+			break
+		}
+	}
 
-    s.mu.Lock()
-    s.inCS = true
-    s.mu.Unlock()
-    log.Printf("[%s] >>> ENTER CS (type 'exit' to leave)", s.id)
+	s.mu.Lock()
+	s.inCS = true
+	s.mu.Unlock()
+	log.Printf("[%s] >>> ENTER CS (type 'exit' to leave)", s.id)
 }
 func (s *Server) exitCS() {
-    s.mu.Lock()
-    if !s.inCS && !s.requesting {
-        s.mu.Unlock()
-        log.Printf("[%s] not in CS and no pending request; ignoring 'exit'", s.id)
-        return
-    }
-    wasInCS := s.inCS
-    s.inCS = false
-    s.requesting = false
-    deferred := make([]string, 0, len(s.deferred))
-    for p := range s.deferred {
-        deferred = append(deferred, p)
-    }
-    s.deferred = make(map[string]bool)
-    s.mu.Unlock()
+	s.mu.Lock()
+	wasInCS := s.inCS
+	s.inCS = false
+	wasRequesting := s.requesting
+	s.requesting = false
+	s.reqTS = 0
+	s.grants = 0
 
-    if wasInCS {
-        log.Printf("[%s] <<< EXIT  CS", s.id)
-    } else {
-        log.Printf("[%s] CANCEL request (not entering CS)", s.id)
-    }
-    for _, p := range deferred {
-        go s.sendGrant(p)
-    }
-    log.Printf("[%s] RELEASE; granted to %d deferred", s.id, len(deferred))
+	deferred := make([]string, 0, len(s.deferred))
+	for p := range s.deferred {
+		deferred = append(deferred, p)
+	}
+	s.deferred = make(map[string]bool)
+	s.mu.Unlock()
+
+	if wasInCS {
+		log.Printf("[%s] <<< EXIT  CS", s.id)
+	} else if wasRequesting {
+		log.Printf("[%s] CANCEL request (leaving the queue)", s.id)
+	} else {
+		log.Printf("[%s] nothing to exit", s.id)
+	}
+
+	for _, p := range deferred {
+		go s.sendGrant(p)
+	}
+	if len(deferred) > 0 {
+		log.Printf("[%s] RELEASE; granted to %d deferred", s.id, len(deferred))
+	}
 }
+
 /***************  main  ****************/
 
 func main() {
@@ -262,7 +262,7 @@ func main() {
 
 	log.Printf("[%s] type 'req'  + Enter to request the Critical Section", s.id)
 	log.Printf("[%s] type 'exit' + Enter to leave the Critical Section (or cancel if pending)", s.id)
-	
+
 	for {
 		var cmd string
 		fmt.Scanln(&cmd)
@@ -274,4 +274,5 @@ func main() {
 		default:
 			log.Printf("[%s] unknown command: %q (try 'req' or 'exit')", s.id, cmd)
 		}
-	}}
+	}
+}
