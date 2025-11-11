@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -217,22 +216,50 @@ func (s *Server) exitCS() {
 	}
 }
 
+// pickPortConfig returns this node's id, addr and peers automatically
+func pickPortConfig() (string, string, []string) {
+	configs := []string{":5001", ":5002", ":5003"} // extend if needed
+
+	// find an available port
+	var myPort string
+	for _, port := range configs {
+		ln, err := net.Listen("tcp", port)
+		if err == nil {
+			ln.Close()
+			myPort = port
+			break
+		}
+	}
+	if myPort == "" {
+		log.Fatalf("No free port found!")
+	}
+
+	// set id as n1/n2/n3 based on index
+	var id string
+	for i, p := range configs {
+		if p == myPort {
+			id = fmt.Sprintf("n%d", i+1)
+			break
+		}
+	}
+
+	// peers = all others
+	peers := make([]string, 0)
+	for _, p := range configs {
+		if p != myPort {
+			peers = append(peers, p)
+		}
+	}
+
+	return id, myPort, peers
+}
+
 /***************  main  ****************/
 
 func main() {
 	// Usage:
 	// go run ./server --id=n1 --addr=:5001 --peers=:5002,:5003
-	if len(os.Args) < 4 {
-		fmt.Println("Usage: server --id=<id> --addr=<host:port> --peers=<h:p,h:p,...>")
-		os.Exit(1)
-	}
-	id := strings.SplitN(os.Args[1], "=", 2)[1]
-	addr := strings.SplitN(os.Args[2], "=", 2)[1]
-	peerCSV := strings.SplitN(os.Args[3], "=", 2)[1]
-	var peers []string
-	if peerCSV != "" {
-		peers = strings.Split(peerCSV, ",")
-	}
+	id, addr, peers := pickPortConfig()
 
 	s := NewServer(id, addr, peers)
 
