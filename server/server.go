@@ -282,7 +282,6 @@ func main() {
 	s.connectPeers()
 
 	log.Printf("[%s] type 'req'  + Enter to request the Critical Section", s.id)
-	log.Printf("[%s] type 'exit' + Enter to leave the Critical Section (or cancel if pending)", s.id)
 
 	for {
 		var cmd string
