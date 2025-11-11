@@ -1,17 +1,18 @@
-syntax = "proto3";  
+syntax = "proto3";
 option go_package = "ARGAWALA/grpc";
 
 message Request {
-    int64 time = 1;
+  int64 time = 1;
+  string from = 2; 
 }
 
 message Reply {
-    string message = 1;
+  string message = 1;
 }
 
 message Empty {}
 
 service ArgaWala {
-    rpc SendRequest(Request) returns (Empty){}
-    rpc SendReply(Reply) returns (Empty){}
+  rpc SendRequest(Request) returns (Empty) {}
+  rpc SendReply(Reply) returns (Empty) {}
 }

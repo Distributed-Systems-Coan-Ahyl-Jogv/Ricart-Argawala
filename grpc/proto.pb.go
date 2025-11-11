@@ -24,6 +24,7 @@ const (
 type Request struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Time          int64                  `protobuf:"varint,1,opt,name=time,proto3" json:"time,omitempty"`
+	From          string                 `protobuf:"bytes,2,opt,name=from,proto3" json:"from,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -63,6 +64,13 @@ func (x *Request) GetTime() int64 {
 		return x.Time
 	}
 	return 0
+}
+
+func (x *Request) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
 }
 
 type Reply struct {
@@ -149,9 +157,10 @@ var File_grpc_proto_proto protoreflect.FileDescriptor
 
 const file_grpc_proto_proto_rawDesc = "" +
 	"\n" +
-	"\x10grpc/proto.proto\"\x1d\n" +
+	"\x10grpc/proto.proto\"1\n" +
 	"\aRequest\x12\x12\n" +
-	"\x04time\x18\x01 \x01(\x03R\x04time\"!\n" +
+	"\x04time\x18\x01 \x01(\x03R\x04time\x12\x12\n" +
+	"\x04from\x18\x02 \x01(\tR\x04from\"!\n" +
 	"\x05Reply\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\a\n" +
 	"\x05Empty2L\n" +
