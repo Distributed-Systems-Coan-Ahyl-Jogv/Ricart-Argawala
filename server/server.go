@@ -32,6 +32,7 @@ type Server struct {
 	reqTS      int64
 	grants     int
 	deferred   map[string]bool // addr -> deferred?
+	inCS bool
 }
 
 func NewServer(id, addr string, peers []string) *Server {
@@ -102,24 +103,42 @@ func (s *Server) SendReply(ctx context.Context, rep *proto.Reply) (*proto.Empty,
 /***************  client helpers  ****************/
 
 func (s *Server) sendGrant(peerAddr string) {
-	cli, ok := s.clis[peerAddr]
-	if !ok {
-		// As a fallback, try to connect on the fly.
-		conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			log.Printf("[%s] grant: dial %s: %v", s.id, peerAddr, err)
-			return
-		}
-		cli = proto.NewArgaWalaClient(conn)
-		s.clis[peerAddr] = cli
-	}
+    var cli proto.ArgaWalaClient
+    var ok bool
+    if cli, ok = s.clis[peerAddr]; !ok {
+        // create on first use
+        conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+        if err == nil {
+            cli = proto.NewArgaWalaClient(conn)
+            s.clis[peerAddr] = cli
+        }
+    }
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_, err := cli.SendReply(ctx, &proto.Reply{Message: "grant"})
-	if err != nil {
-		log.Printf("[%s] SendReply to %s failed: %v", s.id, peerAddr, err)
-	}
+    backoff := 150 * time.Millisecond
+    for attempt := 1; attempt <= 5; attempt++ {
+        if cli == nil {
+            // try to (re)dial
+            conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+            if err != nil {
+                log.Printf("[%s] grant: dial %s (attempt %d): %v", s.id, peerAddr, attempt, err)
+                time.Sleep(backoff)
+                backoff *= 2
+                continue
+            }
+            cli = proto.NewArgaWalaClient(conn)
+            s.clis[peerAddr] = cli
+        }
+
+        ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+        _, err := cli.SendReply(ctx, &proto.Reply{Message: "grant"})
+        cancel()
+        if err == nil {
+            return
+        }
+        log.Printf("[%s] SendReply to %s (attempt %d) failed: %v", s.id, peerAddr, attempt, err)
+        time.Sleep(backoff)
+        backoff *= 2
+    }
 }
 
 func (s *Server) broadcastRequest() {
@@ -159,23 +178,51 @@ func (s *Server) release() {
 /***************  CS driver  ****************/
 
 func (s *Server) requestCS() {
-	s.broadcastRequest()
-	// Wait for all grants
-	for {
-		time.Sleep(50 * time.Millisecond)
-		s.mu.Lock()
-		done := (s.grants == len(s.peers))
-		s.mu.Unlock()
-		if done {
-			break
-		}
-	}
-	log.Printf("[%s] >>> ENTER CS", s.id)
-	time.Sleep(1200 * time.Millisecond) // emulate critical work
-	log.Printf("[%s] <<< EXIT  CS", s.id)
-	s.release()
-}
+    s.broadcastRequest()
 
+    // Wait for all grants
+    for {
+        time.Sleep(50 * time.Millisecond)
+        s.mu.Lock()
+        done := (s.grants == len(s.peers))
+        s.mu.Unlock()
+        if done {
+            break
+        }
+    }
+
+    s.mu.Lock()
+    s.inCS = true
+    s.mu.Unlock()
+    log.Printf("[%s] >>> ENTER CS (type 'exit' to leave)", s.id)
+}
+func (s *Server) exitCS() {
+    s.mu.Lock()
+    if !s.inCS && !s.requesting {
+        s.mu.Unlock()
+        log.Printf("[%s] not in CS and no pending request; ignoring 'exit'", s.id)
+        return
+    }
+    wasInCS := s.inCS
+    s.inCS = false
+    s.requesting = false
+    deferred := make([]string, 0, len(s.deferred))
+    for p := range s.deferred {
+        deferred = append(deferred, p)
+    }
+    s.deferred = make(map[string]bool)
+    s.mu.Unlock()
+
+    if wasInCS {
+        log.Printf("[%s] <<< EXIT  CS", s.id)
+    } else {
+        log.Printf("[%s] CANCEL request (not entering CS)", s.id)
+    }
+    for _, p := range deferred {
+        go s.sendGrant(p)
+    }
+    log.Printf("[%s] RELEASE; granted to %d deferred", s.id, len(deferred))
+}
 /***************  main  ****************/
 
 func main() {
@@ -213,12 +260,18 @@ func main() {
 	time.Sleep(300 * time.Millisecond)
 	s.connectPeers()
 
-	log.Printf("[%s] type 'req' + Enter to request the Critical Section", s.id)
+	log.Printf("[%s] type 'req'  + Enter to request the Critical Section", s.id)
+	log.Printf("[%s] type 'exit' + Enter to leave the Critical Section (or cancel if pending)", s.id)
+	
 	for {
 		var cmd string
 		fmt.Scanln(&cmd)
-		if strings.TrimSpace(cmd) == "req" {
+		switch strings.TrimSpace(cmd) {
+		case "req":
 			go s.requestCS()
+		case "exit":
+			s.exitCS()
+		default:
+			log.Printf("[%s] unknown command: %q (try 'req' or 'exit')", s.id, cmd)
 		}
-	}
-}
+	}}
