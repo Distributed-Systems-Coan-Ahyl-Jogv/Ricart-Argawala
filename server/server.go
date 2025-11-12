@@ -18,19 +18,17 @@ import (
 type Server struct {
 	proto.UnimplementedArgaWalaServer
 
-	// identity & peers
-	id    string   // human-friendly id, e.g. "n1"
-	addr  string   // our listen addr, e.g. ":5001"
-	peers []string // other nodes' addrs (host:port)
+	id    string  
+	addr  string  
+	peers []string
 	clis  map[string]proto.ArgaWalaClient
 
-	// RA state
 	mu         sync.Mutex
 	clock      int64
 	requesting bool
 	reqTS      int64
 	grants     int
-	deferred   map[string]bool // addr -> deferred?
+	deferred   map[string]bool 
 	inCS       bool
 }
 
@@ -62,16 +60,15 @@ func (s *Server) connectPeers() {
 	}
 }
 
-/***************  gRPC handlers  ****************/
 
-// Another node asks us for permission
+
 func (s *Server) SendRequest(ctx context.Context, req *proto.Request) (*proto.Empty, error) {
-	sender := req.From // use the sender’s listening address, not their client port
+	sender := req.From
 
 	s.mu.Lock()
 	s.bump(req.Time)
 
-	// Determine whether to defer or grant
+	
 	shouldDefer := s.requesting &&
 		(s.reqTS < req.Time || (s.reqTS == req.Time && s.id < sender))
 
@@ -84,13 +81,13 @@ func (s *Server) SendRequest(ctx context.Context, req *proto.Request) (*proto.Em
 
 	s.mu.Unlock()
 
-	// Grant immediately if not deferring
+	
 	go s.sendGrant(sender)
 	log.Printf("[%s] GRANT immediately to %s", s.id, sender)
 	return &proto.Empty{}, nil
 }
 
-// We receive a grant
+
 func (s *Server) SendReply(ctx context.Context, rep *proto.Reply) (*proto.Empty, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -99,13 +96,12 @@ func (s *Server) SendReply(ctx context.Context, rep *proto.Reply) (*proto.Empty,
 	return &proto.Empty{}, nil
 }
 
-/***************  client helpers  ****************/
+
 
 func (s *Server) sendGrant(peerAddr string) {
 	var cli proto.ArgaWalaClient
 	var ok bool
 	if cli, ok = s.clis[peerAddr]; !ok {
-		// create on first use
 		conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err == nil {
 			cli = proto.NewArgaWalaClient(conn)
@@ -116,7 +112,7 @@ func (s *Server) sendGrant(peerAddr string) {
 	backoff := 150 * time.Millisecond
 	for attempt := 1; attempt <= 5; attempt++ {
 		if cli == nil {
-			// try to (re)dial
+
 			conn, err := grpc.Dial(peerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			if err != nil {
 				log.Printf("[%s] grant: dial %s (attempt %d): %v", s.id, peerAddr, attempt, err)
@@ -163,12 +159,12 @@ func (s *Server) broadcastRequest() {
 	}
 }
 
-/***************  CS driver  ****************/
+
 
 func (s *Server) requestCS() {
 	s.broadcastRequest()
 
-	// Wait for all grants
+
 	for {
 		time.Sleep(50 * time.Millisecond)
 		s.mu.Lock()
@@ -216,11 +212,11 @@ func (s *Server) exitCS() {
 	}
 }
 
-// pickPortConfig returns this node's id, addr and peers automatically
-func pickPortConfig() (string, string, []string) {
-	configs := []string{":5001", ":5002", ":5003"} // extend if needed
 
-	// find an available port
+func pickPortConfig() (string, string, []string) {
+	configs := []string{":5001", ":5002", ":5003"} 
+
+
 	var myPort string
 	for _, port := range configs {
 		ln, err := net.Listen("tcp", port)
@@ -234,7 +230,7 @@ func pickPortConfig() (string, string, []string) {
 		log.Fatalf("No free port found!")
 	}
 
-	// set id as n1/n2/n3 based on index
+
 	var id string
 	for i, p := range configs {
 		if p == myPort {
@@ -243,7 +239,7 @@ func pickPortConfig() (string, string, []string) {
 		}
 	}
 
-	// peers = all others
+
 	peers := make([]string, 0)
 	for _, p := range configs {
 		if p != myPort {
@@ -254,16 +250,15 @@ func pickPortConfig() (string, string, []string) {
 	return id, myPort, peers
 }
 
-/***************  main  ****************/
 
 func main() {
-	// Usage:
-	// go run ./server --id=n1 --addr=:5001 --peers=:5002,:5003
+
+
 	id, addr, peers := pickPortConfig()
 
 	s := NewServer(id, addr, peers)
 
-	// Start gRPC server
+
 	gs := grpc.NewServer()
 	proto.RegisterArgaWalaServer(gs, s)
 	lis, err := net.Listen("tcp", addr)
@@ -277,7 +272,7 @@ func main() {
 		}
 	}()
 
-	// Connect to peers (give them a moment to start)
+
 	time.Sleep(300 * time.Millisecond)
 	s.connectPeers()
 
