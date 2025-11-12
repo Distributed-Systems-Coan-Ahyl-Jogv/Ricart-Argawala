@@ -1,14 +1,15 @@
 Server 1 log:
 
-2025/11/11 10:29:22 [n1] listening on :5001; peers=[:5002 :5003]
-2025/11/11 10:29:23 [n1] type 'req'  + Enter to request the Critical Section
-2025/11/11 10:29:40 [n1] GRANT immediately to :5003
-2025/11/11 10:29:46 [n1] GRANT immediately to :5002
+2025/11/12 14:35:13 [n1] listening on :5001; peers=[:5002 :5003]
+2025/11/12 14:35:14 [n1] type 'req'  + Enter to request the Critical Section
 req
-2025/11/11 10:29:50 [n1] sent REQUEST(ts=5) to :5002
-2025/11/11 10:29:50 [n1] sent REQUEST(ts=5) to :5003
-2025/11/11 10:29:58 [n1] received GRANT (1/2) message="grant"
-2025/11/11 10:30:06 [n1] received GRANT (2/2) message="grant"
-2025/11/11 10:30:06 [n1] >>> ENTER CS (type 'exit' to leave)
+2025/11/12 14:35:38 [n1] sent REQUEST(ts=1) to :5003
+2025/11/12 14:35:38 [n1] sent REQUEST(ts=1) to :5002
+2025/11/12 14:35:38 [n1] received GRANT (1/2) message="grant"
+2025/11/12 14:35:38 [n1] received GRANT (2/2) message="grant"
+2025/11/12 14:35:38 [n1] >>> ENTER CS (type 'exit' to leave)
+2025/11/12 14:35:46 [n1] DEFER to :5002 (my ts=1, their ts=3)
+2025/11/12 14:35:54 [n1] DEFER to :5003 (my ts=1, their ts=5)
 exit
-2025/11/11 10:30:12 [n1] <<< EXIT  CS
+2025/11/12 14:36:17 [n1] <<< EXIT  CS
+2025/11/12 14:36:17 [n1] RELEASE; granted to 2 deferred
